@@ -144,6 +144,19 @@ def generate_images_for_pages(pages, story_id):
             print(f"Image error on page {i+1}: {e}")
             image_paths.append("/static/images/default.jpg")
     return image_paths
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        # check user credentials here
+        return "Logged in!"  # Replace with redirect
+    return render_template("login.html")
+
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    if request.method == "POST":
+        # save new user data here
+        return "Signed up!"  # Replace with redirect
+    return render_template("signup.html")
 
 @app.route("/", methods=["GET", "POST"])
 def index():
