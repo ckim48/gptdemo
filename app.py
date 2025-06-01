@@ -106,7 +106,7 @@ def storybook():
             pages = json.load(f)
         with open(IMAGES_JSON_PATH) as f:
             images = json.load(f)
-    return render_template("storybook.html", pages=pages, images=images)
+    return render_template("story_detail.html", pages=pages, images=images)
 
 def split_story_into_pages(story_text, max_chars_per_page=500):
     words = story_text.split()
@@ -190,7 +190,7 @@ def index():
             pages = [f"Error generating story: {e}"]
             images = ["/static/images/default.jpg"]
 
-    return render_template("index.html", pages=pages, images=images)
+    return render_template("generate.html", pages=pages, images=images)
 
 if __name__ == "__main__":
     app.run(debug=True)
