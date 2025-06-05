@@ -158,8 +158,12 @@ def signup():
         return "Signed up!"  # Replace with redirect
     return render_template("signup.html")
 
-@app.route("/", methods=["GET", "POST"])
+@app.route("/")
 def index():
+    return render_template('index.html')
+
+@app.route("/generate", methods=["GET", "POST"])
+def generate():
     pages, images = [], []
 
     if os.path.exists(STORY_JSON_PATH) and os.path.exists(IMAGES_JSON_PATH):
