@@ -2,7 +2,8 @@ import uuid
 import json
 import os
 import requests
-from flask import Flask, render_template, request, send_file
+from flask import Flask, render_template, request, send_file, session, redirect, url_for
+
 from openai import OpenAI
 from reportlab.lib.pagesizes import landscape, letter
 from reportlab.pdfgen import canvas
@@ -156,16 +157,17 @@ def login():
 
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT name, password_hash FROM users WHERE email = ?", (email,))
+            cursor.execute("SELECT id, name, password_hash FROM users WHERE email = ?", (email,))
             result = cursor.fetchone()
 
-        if result and check_password_hash(result[1], password):
-            return f"Welcome, {result[0]}! You are now logged in."
+        if result and check_password_hash(result[2], password):
+            session["user_id"] = result[0]
+            session["username"] = result[1]
+            return redirect(url_for("index"))  # or "generate" or any other page
         else:
             return "Invalid credentials. Please try again."
 
     return render_template("login.html")
-
 
 
 @app.route("/signup", methods=["GET", "POST"])
@@ -182,7 +184,7 @@ def signup():
                 cursor.execute("INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
                                (name, email, password_hash))
                 conn.commit()
-            return "Signup successful! You can now log in."
+            return redirect(url_for("login"))
         except sqlite3.IntegrityError:
             return "Email already registered. Please log in."
 
