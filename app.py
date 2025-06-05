@@ -8,12 +8,16 @@ from reportlab.lib.pagesizes import landscape, letter
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from io import BytesIO
+from werkzeug.security import generate_password_hash, check_password_hash
+import sqlite3
 
 app = Flask(__name__)
 
 STORY_JSON_PATH = "saved_data/story.json"
 IMAGES_JSON_PATH = "saved_data/images.json"
 IMAGE_DIR = "static/images"
+DB_PATH = "projectgpt.db"
+
 
 os.makedirs("saved_data", exist_ok=True)
 os.makedirs(IMAGE_DIR, exist_ok=True)
@@ -147,16 +151,43 @@ def generate_images_for_pages(pages, story_id):
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        # check user credentials here
-        return "Logged in!"  # Replace with redirect
+        email = request.form["email"]
+        password = request.form["password"]
+
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name, password_hash FROM users WHERE email = ?", (email,))
+            result = cursor.fetchone()
+
+        if result and check_password_hash(result[1], password):
+            return f"Welcome, {result[0]}! You are now logged in."
+        else:
+            return "Invalid credentials. Please try again."
+
     return render_template("login.html")
+
+
 
 @app.route("/signup", methods=["GET", "POST"])
 def signup():
     if request.method == "POST":
-        # save new user data here
-        return "Signed up!"  # Replace with redirect
+        name = request.form["name"]
+        email = request.form["email"]
+        password = request.form["password"]
+        password_hash = generate_password_hash(password)
+
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
+                               (name, email, password_hash))
+                conn.commit()
+            return "Signup successful! You can now log in."
+        except sqlite3.IntegrityError:
+            return "Email already registered. Please log in."
+
     return render_template("signup.html")
+
 
 @app.route("/")
 def index():
