@@ -14,6 +14,7 @@ import sqlite3
 
 app = Flask(__name__)
 
+app.secret_key = "secret_key_here"
 STORY_JSON_PATH = "saved_data/story.json"
 IMAGES_JSON_PATH = "saved_data/images.json"
 IMAGE_DIR = "static/images"
