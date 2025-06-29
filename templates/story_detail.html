@@ -22,7 +22,7 @@
 
     #storybook {
       width: 1000px;
-      height: 650px;
+      height: 720px;
       perspective: 2000px;
       position: relative;
       border-radius: 12px;
@@ -248,10 +248,10 @@
 
 <div class="container my-5">
   <div class="text-center mb-4">
-    <h2 class="fw-bold display-6 text-dark">
-      View Your Storybook
-    </h2>
-    <p class="text-muted fst-italic">A magical journey powered by imagination & AI</p>
+<!--    <h2 class="fw-bold display-6 text-dark">-->
+<!--      {{ title }}-->
+<!--    </h2>-->
+<!--    <p class="text-muted fst-italic">A magical journey powered by imagination & AI</p>-->
   </div>
 
   {% if pages and images %}
@@ -264,12 +264,6 @@
           <div class="page-container border-end">
             <div class="page">
               <img src="{{ images[i] }}" alt="Page Image">
-            </div>
-          </div>
-          <div class="page-container">
-            <div class="page">
-              <h6 class="text-muted"><i class="bi bi-journal-text me-1"></i>Page {{ i + 1 }}</h6>
-              <p>{{ pages[i] }}</p>
             </div>
           </div>
         {% endfor %}
@@ -309,9 +303,11 @@
       </div>
 
       <div class="modal-footer border-0">
-        <a href="/download_pdf" class="btn text-white px-4" style="background: linear-gradient(135deg, #00c6ff, #0072ff); border-radius: 10px;">
+        <a href="/download_pdf/{{ story_id }}" class="btn text-white px-4"
+           style="background: linear-gradient(135deg, #00c6ff, #0072ff); border-radius: 10px;">
           <i class="bi bi-download me-1"></i>Download PDF
         </a>
+
         <button type="button" class="btn btn-outline-secondary px-4 rounded" data-bs-dismiss="modal">Close</button>
       </div>
     </div>
@@ -328,7 +324,7 @@
     if ($book.find('.page-container').length > 1) {
       $book.turn({
         width: 1000,
-        height: 650,
+        height: 720,
         autoCenter: true,
         elevation: 50,
         gradients: true

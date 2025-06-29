@@ -163,7 +163,7 @@
       <div class="col-lg-6">
         <div class="card p-4">
           <h1 class="h4 text-center mb-4"><strong>Generate Story</strong></h1>
-          <form method="POST" id="generate-form">
+          <form action="{{url_for('generate')}}" method="POST" id="generate-form">
             <div class="mb-3">
               <label for="field" class="form-label">Field</label>
               <select id="field" name="field" class="form-select" required>
@@ -171,6 +171,7 @@
                 <option value="Biology">Biology</option>
                 <option value="Astronomy">Astronomy</option>
                 <option value="Business">Business</option>
+                <option value="Chemistry">Chemistry</option>
               </select>
             </div>
             <div class="mb-3">
@@ -180,6 +181,7 @@
                 <option value="Photosynthesis">Photosynthesis</option>
                 <option value="Planets of the Solar System">Planets of the Solar System</option>
                 <option value="Saving Money">Saving Money</option>
+                <option value="chem">Saving Money</option>
               </select>
             </div>
             <div class="row gx-2">
@@ -224,32 +226,52 @@
       </div>
 
 
-      <!-- Right Column: Storybook Cover -->
-      <div class="col-lg-6">
-        <div class="storybook-cover text-center h-100 d-flex flex-column justify-content-center align-items-center">
-          <img src="/static/images/story_2ee36d90_page_1.png" alt="Story Cover" class="shadow-sm" />
+        <!-- Right Column: Storybook Cover -->
+        <div class="col-lg-6">
+          <div class="storybook-cover text-center h-100 d-flex flex-column justify-content-center align-items-center">
 
-          <h2 class="storybook-title">The Magical Water Journey</h2>
-          <p class="storybook-subtitle">A Tale of Science and Wonder</p>
+            {% if title %}
+              <img src="{{ images[0] if images else '/static/images/default.jpg' }}" alt="Story Cover" class="shadow-sm" />
+              <h2 class="storybook-title">{{ title }}</h2>
+              <p class="storybook-subtitle">{{ subtitle }}</p>
 
-          <div class="storybook-meta">
-            <p><strong>Field:</strong> Environmental Science</p>
-            <p><strong>Topic:</strong> The Water Cycle</p>
-            <p><strong>Grade:</strong> 3</p>
+              <div class="storybook-meta">
+                <p><strong>Field:</strong> {{ field }}</p>
+                <p><strong>Topic:</strong> {{ topic }}</p>
+                <p><strong>Grade:</strong> {{ grade }}</p>
+              </div>
+
+              <div class="d-flex justify-content-center gap-3">
+                <a href="{{ url_for('storybook') }}" class="btn btn-read">
+                  <i class="bi bi-book"></i> Read Story
+                </a>
+                <a href="{{ url_for('download_pdf') }}" class="btn btn-download">
+                  <i class="bi bi-download"></i> Download PDF
+                </a>
+              </div>
+
+              <p class="storybook-footer">Published by ProjectGPT</p>
+
+            {% else %}
+              <div class="text-center px-3">
+<!--                <img src="/static/images/placeholder_book.svg" alt="Placeholder" class="img-fluid mb-4" style="max-height: 180px; opacity: 0.85;" />-->
+
+                <h2 class="storybook-title" style="font-size: 1.75rem;">Ready to Create a Magical Story?</h2>
+                <p class="storybook-subtitle" style="font-size: 1rem; max-width: 400px; margin: 0 auto;">
+                  Select a topic and generate a custom educational storybook just for your young learner.
+                </p>
+
+                <div class="mt-4">
+                  <i class="bi bi-stars" style="font-size: 2rem; color: #a78bfa;"></i>
+                  <p class="storybook-footer mt-2" style="font-size: 0.9rem; color: #888;">Your story preview will appear here after generation.</p>
+                </div>
+              </div>
+            {% endif %}
+
+
           </div>
-
-          <div class="d-flex justify-content-center gap-3">
-            <a href="{{url_for('storybook')}}" class="btn btn-read">
-              <i class="bi bi-book"></i> Read Story
-            </a>
-            <a href="#" class="btn btn-download">
-              <i class="bi bi-download"></i> Download PDF
-            </a>
-          </div>
-
-          <p class="storybook-footer">Published by ProjectGPT</p>
         </div>
-      </div>
+
     </div>
   </div>
 
