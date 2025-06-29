@@ -9,10 +9,12 @@ from reportlab.lib.pagesizes import landscape, letter
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, date
+import random
 from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
 from generate_tts import generate_storybook_audio
+from PIL import Image, ImageDraw, ImageFont
 
 app = Flask(__name__)
 
@@ -21,7 +23,6 @@ STORY_JSON_PATH = "saved_data/story.json"
 IMAGES_JSON_PATH = "saved_data/images.json"
 IMAGE_DIR = "static/images"
 DB_PATH = "projectgpt.db"
-
 
 
 
@@ -41,6 +42,98 @@ available_voices = {
 }
 
 # projectGpt.com/generate_audio
+
+@app.route("/daily_quiz", methods=["GET", "POST"])
+def daily_quiz():
+    if "user_id" not in session:
+        flash("Please log in to take your daily quiz.", "warning")
+        return redirect(url_for("login"))
+
+    user_id = session["user_id"]
+    today = date.today().isoformat()
+
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+
+        # Check if already answered today
+        cursor.execute(
+            "SELECT question, options, correct_answer, selected_answer, is_correct "
+            "FROM user_daily_quiz WHERE user_id = ? AND quiz_date = ?", (user_id, today))
+        row = cursor.fetchone()
+
+        if request.method == "POST":
+            selected = request.form["answer"]
+            correct = request.form["correct"]
+
+            cursor.execute("""
+                UPDATE user_daily_quiz
+                SET selected_answer = ?, is_correct = ?
+                WHERE user_id = ? AND quiz_date = ?
+            """, (selected, int(selected == correct), user_id, today))
+            conn.commit()
+
+            flash("Quiz submitted!", "success")
+            return redirect(url_for("daily_quiz"))
+
+        # If already took quiz, show result
+        if row:
+            question, options_json, correct, selected, is_correct = row
+            return render_template("daily_quiz.html",
+                                   question=question,
+                                   options=json.loads(options_json),
+                                   answered=True,
+                                   selected=selected,
+                                   correct=correct,
+                                   is_correct=is_correct)
+
+        # Generate new quiz based on story content
+        cursor.execute(
+            "SELECT story_json FROM user_stories WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", (user_id,))
+        latest = cursor.fetchone()
+
+        if not latest:
+            flash("Please generate a storybook before taking quizzes.", "info")
+            return redirect(url_for("generate"))
+
+        pages = json.loads(latest[0])
+        context = " ".join(pages[:3])  # Use first few pages as context
+
+        # Generate question
+        prompt = f"""
+        From the following children's story text:\n\"{context}\"\n
+        Create a simple multiple-choice question (with 4 options) for a grade-level quiz.
+        Format your answer as:
+        Question: <question>
+        A) <option1>
+        B) <option2>
+        C) <option3>
+        D) <option4>
+        Answer: <correct_option_letter>
+        """
+
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300
+        )
+
+        output = response.choices[0].message.content
+        lines = output.strip().splitlines()
+        question = lines[0].replace("Question:", "").strip()
+        options = {line[0]: line[3:].strip() for line in lines[1:5]}
+        correct_letter = lines[5].split(":")[1].strip()
+
+        cursor.execute("""
+            INSERT INTO user_daily_quiz (user_id, quiz_date, question, options, correct_answer)
+            VALUES (?, ?, ?, ?, ?)
+        """, (user_id, today, question, json.dumps(options), correct_letter))
+        conn.commit()
+
+        return render_template("daily_quiz.html",
+                               question=question,
+                               options=options,
+                               answered=False,
+                               correct=correct_letter)
 
 @app.route('/generate_audio', methods=["GET","POST"])
 def generate_audio():
@@ -119,6 +212,42 @@ def logout():
     session.clear()
     return render_template('index.html')
 
+def get_recommended_topics(history_list):
+    prompt = (
+        "You are a children's story assistant. Based on the user's previous stories below:\n"
+        + "\n".join(f"- {item}" for item in history_list) +
+        "\n\nRecommend 3 new story topics in the following format:\n"
+        "Field: <subject>\n"
+        "Topic: <new topic>\n"
+        "Reason: <why it's relevant based on past topics>\n\n"
+        "Respond with 3 sets in this format, separated by blank lines."
+    )
+
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
+        max_tokens=400
+    )
+
+    content = response.choices[0].message.content.strip()
+    # Split into 3 blocks
+    blocks = content.split("\n\n")
+    recs = []
+    for block in blocks:
+        lines = block.strip().splitlines()
+        field = topic = reason = ""
+        for line in lines:
+            if line.lower().startswith("field:"):
+                field = line.split(":", 1)[1].strip()
+            elif line.lower().startswith("topic:"):
+                topic = line.split(":", 1)[1].strip()
+            elif line.lower().startswith("reason:"):
+                reason = line.split(":", 1)[1].strip()
+        if field and topic:
+            recs.append({"field": field, "topic": topic, "reason": reason})
+    return recs
 
 @app.route("/view_story/<int:story_id>")
 def view_story(story_id):
@@ -169,36 +298,9 @@ def storybook():
             images = json.load(f)
     return render_template("story_detail.html", pages=pages, images=images)
 
-import re
-def split_story_into_pages(text):
-    pattern = r"Page\s+\d+:?\s+(.*?)(?=Page\s+\d+|$)"
-    matches = re.findall(pattern, text, re.DOTALL)
-    return [match.strip() for match in matches]
 
-def generate_images_for_pages(pages, story_id):
-    image_paths = []
-    pages = pages[:3]
-    for i, page in enumerate(pages):
-        prompt = f"Children's storybook illustration: {page}"
-        try:
-            response = client.images.generate(
-                model="dall-e-3",
-                prompt=prompt,
-                n=1,
-                size="1024x1024"
-            )
-            image_url = response.data[0].url
 
-            img_data = requests.get(image_url).content
-            filename = f"{IMAGE_DIR}/story_{story_id}_page_{i+1}.png"
-            with open(filename, "wb") as f:
-                f.write(img_data)
 
-            image_paths.append("/" + filename)
-        except Exception as e:
-            print(f"Image error on page {i+1}: {e}")
-            image_paths.append("/static/images/default.jpg")
-    return image_paths
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -259,6 +361,94 @@ def get_user_topic_field_history(user_id, limit=5):
         )
         return cursor.fetchall()
 
+import re
+def split_story_into_pages(text):
+    pattern = r"Page\s+\d+:?\s+(.*?)(?=Page\s+\d+|$)"
+    matches = re.findall(pattern, text, re.DOTALL)
+    return [match.strip() for match in matches]
+def generate_storybook_page_with_text(initialfile, page, result):
+    img = Image.open(initialfile).convert("RGBA")
+    draw = ImageDraw.Draw(img)
+
+    font = ImageFont.truetype("arial.ttf", size = 36)
+
+    max_width = img.width - 80
+    lines = []
+    words = page.split() # ["word1","word2","word3",...]
+    line = ""
+    for word in words:
+        test_line = f"{line} {word}".strip()
+        w, h = draw.textsize(test_line, font=font)
+        if w <= max_width:
+            line = test_line
+        else:
+            lines.append(line)
+            line = word
+    lines.append(line)
+
+    y = img.height - (len(lines) * 45) - 30
+    for line in lines:
+        draw.text((40,y), line, fill="black", font=font)
+        y += 45
+    img.save(result)
+
+import base64
+def encode_image(image_path):
+    with open(image_path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
+
+def calculate_position(image_path):
+    base64_image = encode_image(image_path)
+    response = client.chat.completions.create(
+        model = "gpt-4o",
+        messages = [
+            {"role:":"user", "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url" : f"data:image/png;base64, {base64_image}"
+                    }
+                },{
+                    "type": "text",
+                    "text" :"Where should i overlay this text to make it readable and not block important parts? Reply with top-left, top-center, center, bottom-left, etc."
+                }
+            ]
+             }
+        ],
+        max_tokens = 20
+    )
+    position = response.choices[0].message.content.strip()
+    return position
+
+def generate_images_for_pages(pages, story_id):
+    image_paths = []
+    pages = pages[:3]
+    for i, page in enumerate(pages):
+        prompt = (
+            f"Children's storybook illustration in the style of warm watercolor and soft digital painting, "
+            f"featuring expressive cartoon-style characters, clear outlines, and a light yellow-orange color palette. "
+            f"Page description: {page}. No text or words on the image."
+        )
+        try:
+            response = client.images.generate(
+                model="dall-e-3",
+                prompt=prompt,
+                n=1,
+                size="1024x1024"
+            )
+            image_url = response.data[0].url
+
+            img_data = requests.get(image_url).content
+            filename = f"{IMAGE_DIR}/raw_story_{story_id}_page_{i+1}.png"
+            filename2 = f"{IMAGE_DIR}/story_{story_id}_page_{i + 1}.png"
+            with open(filename, "wb") as f:
+                f.write(img_data)
+            generate_storybook_page_with_text(filename, page, filename2)
+            image_paths.append("/" + filename)
+        except Exception as e:
+            print(f"Image error on page {i+1}: {e}")
+            image_paths.append("/static/images/default.jpg")
+    return image_paths
 
 @app.route("/generate", methods=["GET", "POST"])
 def generate():
@@ -292,7 +482,6 @@ def generate():
             Page 3
             Grandpa smiled, "I have something for you!" 
             It was a dusty old coin album.
-            
             ...
             
             """
@@ -351,6 +540,7 @@ def generate():
                 conn.commit()
 
     return render_template("generate.html", pages=pages, images=images, field=field, topic=topic, grade=grade, title=title, subtitle=subtitle)
+
 @app.route("/profile")
 def profile():
     if "user_id" not in session:
@@ -362,20 +552,23 @@ def profile():
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
 
-        # Get username
+        # Username
         cursor.execute("SELECT name FROM users WHERE id = ?", (user_id,))
         user_info = cursor.fetchone()
 
-        # Get story info with images
+        # Get all stories
         cursor.execute(
             "SELECT id, title, field, topic, grade, created_at, image_json "
             "FROM user_stories WHERE user_id = ? ORDER BY created_at DESC",
             (user_id,)
         )
+        story_rows = cursor.fetchall()
 
         stories = []
-        for row in cursor.fetchall():
+        latest_story_id = None
+        for row in story_rows:
             story_id, title, field, topic, grade, created_at, image_json = row
+            latest_story_id = latest_story_id or story_id
             try:
                 images = json.loads(image_json)
                 cover_image = images[0] if images else None
@@ -383,7 +576,32 @@ def profile():
                 cover_image = None
             stories.append((story_id, title, field, topic, grade, created_at, cover_image))
 
-    return render_template("profile.html", username=user_info[0], stories=stories)
+        # Get cached recommendation if any
+        cursor.execute("SELECT recommendations, last_story_id FROM user_recommendations WHERE user_id = ?", (user_id,))
+        rec_row = cursor.fetchone()
+
+        recommended_topics = []
+        if stories:
+            if rec_row is None or int(rec_row[1]) != latest_story_id:
+                # Recalculate
+                recent_history = [f"{story[2]} - {story[3]}" for story in stories[:5]]
+                recommended_topics = get_recommended_topics(recent_history)
+                json_recs = json.dumps(recommended_topics)
+
+                # Insert or update
+                cursor.execute("""
+                    INSERT INTO user_recommendations (user_id, recommendations, last_story_id)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET recommendations = ?, last_story_id = ?
+                """, (user_id, json_recs, latest_story_id, json_recs, latest_story_id))
+                conn.commit()
+            else:
+                recommended_topics = json.loads(rec_row[0])
+
+    return render_template("profile.html", username=user_info[0], stories=stories, recommended=recommended_topics)
+
+
+
 @app.template_filter('datetimeformat')
 def datetimeformat(value):
     try:
