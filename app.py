@@ -43,6 +43,162 @@ available_voices = {
 
 # projectGpt.com/generate_audio
 
+import re
+import json
+from datetime import date
+
+import re
+
+def extract_first_json(text):
+    """Extract the first complete JSON object from a string."""
+    json_pattern = re.compile(r'\{.*?\}', re.DOTALL)
+    matches = json_pattern.findall(text)
+    for m in matches:
+        try:
+            return json.loads(m)
+        except json.JSONDecodeError:
+            continue
+    raise ValueError("No valid JSON found in GPT output.")
+@app.route("/generate_quiz/<int:story_id>", methods=["POST"])
+def generate_quiz(story_id):
+    user_id = session.get("user_id")
+    if not user_id:
+        return redirect(url_for("login"))
+
+    # Step 0: Check if quiz already exists
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT COUNT(*) FROM user_story_quiz WHERE user_id = ? AND story_id = ?
+        """, (user_id, story_id))
+        count = c.fetchone()[0]
+        if count > 0:
+            flash("Quiz already generated for this story.", "info")
+            return redirect(url_for("view_quiz", story_id=story_id))
+
+    try:
+        # Step 1: Fetch story content
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT story_json FROM user_stories WHERE id = ?", (story_id,))
+        row = c.fetchone()
+        conn.close()
+
+        if not row:
+            flash("Story not found.", "danger")
+            return redirect(url_for("profile"))
+
+        story_content = row[0]
+
+        # Step 2: Generate quiz using GPT
+        prompt = f"""
+        Generate 10 multiple choice quiz questions based on the following children's story:
+
+        \"\"\"{story_content}\"\"\"
+
+        Format:
+        [
+          {{
+            "question": "...",
+            "options": {{
+              "A": "...",
+              "B": "...",
+              "C": "...",
+              "D": "..."
+            }},
+            "answer": "A"
+          }},
+          ...
+        ]
+
+        Only return valid JSON.
+        """
+
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        quiz_text = response.choices[0].message.content.strip()
+
+        try:
+            questions = json.loads(quiz_text)
+        except json.JSONDecodeError:
+            try:
+                from ast import literal_eval
+                questions = literal_eval(quiz_text)
+            except Exception as e:
+                print("Fallback parse failed:", e)
+                flash("Quiz formatting error. Try regenerating.", "danger")
+                return redirect(url_for("profile"))
+
+        # Step 3: Save quiz into DB
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        for q in questions:
+            c.execute("""
+                INSERT INTO user_story_quiz (user_id, story_id, question, options, correct_answer)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                user_id,
+                story_id,
+                q["question"],
+                json.dumps(q["options"]),
+                q["answer"]
+            ))
+        conn.commit()
+        conn.close()
+
+        flash("Quiz generated successfully.", "success")
+        return redirect(url_for("view_quiz", story_id=story_id))
+
+    except Exception as e:
+        print("Quiz generation error:", e)
+        flash("Failed to generate quiz.", "danger")
+        return redirect(url_for("profile"))
+
+
+@app.route("/quiz/<int:story_id>", methods=["GET", "POST"])
+def view_quiz(story_id):
+    user_id = session.get("user_id")
+    if not user_id:
+        flash("Please log in to view the quiz.", "warning")
+        return redirect(url_for("login"))
+
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT question, options, correct_answer, selected_answer, is_correct 
+            FROM user_story_quiz 
+            WHERE user_id = ? AND story_id = ?
+        """, (user_id, story_id))
+        rows = cursor.fetchall()
+
+        if not rows:
+            flash("Quiz not available. Please generate it first.", "info")
+            return redirect(url_for("profile"))
+
+        # Parse multiple questions
+        questions = []
+        options = []
+        selected = []
+        correct = []
+
+        for row in rows:
+            questions.append(row[0])
+            options.append(json.loads(row[1]))
+            correct.append(row[2])
+            selected.append(row[3] if row[3] else None)
+
+        return render_template(
+            "quiz_detail.html",
+            question=questions,
+            options=options,
+            selected=selected,
+            correct=correct
+        )
+
+
 @app.route("/daily_quiz", methods=["GET", "POST"])
 def daily_quiz():
     if "user_id" not in session:
@@ -55,38 +211,52 @@ def daily_quiz():
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
 
-        # Check if already answered today
+        # Fetch existing quiz
         cursor.execute(
             "SELECT question, options, correct_answer, selected_answer, is_correct "
-            "FROM user_daily_quiz WHERE user_id = ? AND quiz_date = ?", (user_id, today))
+            "FROM user_daily_quiz WHERE user_id = ? AND quiz_date = ?",
+            (user_id, today)
+        )
         row = cursor.fetchone()
 
-        if request.method == "POST":
-            selected = request.form["answer"]
-            correct = request.form["correct"]
+        if request.method == "POST" and row:
+            try:
+                user_answers = [request.form.get(f"q{i}") for i in range(10)]
+                correct_answers = json.loads(row[2])
+                results = [ua == ca for ua, ca in zip(user_answers, correct_answers)]
+                correct_count = sum(results)
 
-            cursor.execute("""
-                UPDATE user_daily_quiz
-                SET selected_answer = ?, is_correct = ?
-                WHERE user_id = ? AND quiz_date = ?
-            """, (selected, int(selected == correct), user_id, today))
-            conn.commit()
+                cursor.execute("""
+                    UPDATE user_daily_quiz
+                    SET selected_answer = ?, is_correct = ?
+                    WHERE user_id = ? AND quiz_date = ?
+                """, (json.dumps(user_answers), correct_count, user_id, today))
+                conn.commit()
 
-            flash("Quiz submitted!", "success")
-            return redirect(url_for("daily_quiz"))
+                flash(f"You got {correct_count}/10 correct!", "info")
+                return redirect(url_for("daily_quiz"))
+            except Exception as e:
+                print("Error processing submission:", e)
+                flash("Error submitting answers.", "danger")
+                return redirect(url_for("daily_quiz"))
 
-        # If already took quiz, show result
         if row:
-            question, options_json, correct, selected, is_correct = row
-            return render_template("daily_quiz.html",
-                                   question=question,
-                                   options=json.loads(options_json),
-                                   answered=True,
-                                   selected=selected,
-                                   correct=correct,
-                                   is_correct=is_correct)
+            try:
+                question = json.loads(row[0])
+                options = json.loads(row[1])
+                correct = json.loads(row[2])
+                selected = json.loads(row[3]) if row[3] else []
+                return render_template("daily_quiz.html",
+                                       question=question,
+                                       options=options,
+                                       answered=bool(row[3]),
+                                       selected=selected,
+                                       correct=correct)
+            except Exception as e:
+                print("Error parsing stored quiz JSON:", e)
+                # Continue to regenerate below
 
-        # Generate new quiz based on story content
+        # Get latest story to base quiz on
         cursor.execute(
             "SELECT story_json FROM user_stories WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", (user_id,))
         latest = cursor.fetchone()
@@ -96,44 +266,65 @@ def daily_quiz():
             return redirect(url_for("generate"))
 
         pages = json.loads(latest[0])
-        context = " ".join(pages[:3])  # Use first few pages as context
+        context = " ".join(pages)
 
-        # Generate question
+        # Generate quiz from story
         prompt = f"""
-        From the following children's story text:\n\"{context}\"\n
-        Create a simple multiple-choice question (with 4 options) for a grade-level quiz.
-        Format your answer as:
-        Question: <question>
-        A) <option1>
-        B) <option2>
-        C) <option3>
-        D) <option4>
-        Answer: <correct_option_letter>
+        Generate 10 multiple choice quiz questions based on the following children's story:
+
+        \"\"\"{context}\"\"\"
+
+        Format:
+        [
+          {{
+            "question": "...",
+            "options": {{
+              "A": "...",
+              "B": "...",
+              "C": "...",
+              "D": "..."
+            }},
+            "answer": "A"
+          }},
+          ...
+        ]
+
+        Only return valid JSON.
         """
 
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=300
-        )
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=1200
+            )
+            content = response.choices[0].message.content.strip()
+            quiz_data = json.loads(content)
 
-        output = response.choices[0].message.content
-        lines = output.strip().splitlines()
-        question = lines[0].replace("Question:", "").strip()
-        options = {line[0]: line[3:].strip() for line in lines[1:5]}
-        correct_letter = lines[5].split(":")[1].strip()
+            if not isinstance(quiz_data, list) or len(quiz_data) != 10:
+                raise ValueError("Invalid quiz data structure")
 
-        cursor.execute("""
-            INSERT INTO user_daily_quiz (user_id, quiz_date, question, options, correct_answer)
-            VALUES (?, ?, ?, ?, ?)
-        """, (user_id, today, question, json.dumps(options), correct_letter))
-        conn.commit()
+            questions = [q["question"] for q in quiz_data]
+            options = [q["options"] for q in quiz_data]
+            answers = [q["answer"] for q in quiz_data]
 
-        return render_template("daily_quiz.html",
-                               question=question,
-                               options=options,
-                               answered=False,
-                               correct=correct_letter)
+            cursor.execute("""
+                INSERT INTO user_daily_quiz (user_id, quiz_date, question, options, correct_answer)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, today, json.dumps(questions), json.dumps(options), json.dumps(answers)))
+            conn.commit()
+
+            return render_template("daily_quiz.html",
+                                   question=questions,
+                                   options=options,
+                                   answered=False,
+                                   correct=answers)
+
+        except Exception as e:
+            print("GPT quiz generation error:", e)
+            flash("Unable to generate quiz today. Try again later.", "danger")
+            return redirect(url_for("index"))
+
 
 @app.route('/generate_audio', methods=["GET","POST"])
 def generate_audio():
@@ -370,7 +561,7 @@ def generate_storybook_page_with_text(initialfile, page, result):
     img = Image.open(initialfile).convert("RGBA")
     draw = ImageDraw.Draw(img)
 
-    font = ImageFont.truetype("arial.ttf", size = 36)
+    font = ImageFont.truetype("RobotoMono-Regular.ttf", size = 36)
 
     max_width = img.width - 80
     lines = []
@@ -420,36 +611,46 @@ def calculate_position(image_path):
     position = response.choices[0].message.content.strip()
     return position
 
-def generate_images_for_pages(pages, story_id):
+def fix_orientation(path):
+    """Rotate image if it's horizontal."""
+    img = Image.open(path)
+    if img.width > img.height:
+        img = img.rotate(90, expand=True)
+        img.save(path)
+
+def generate_images_for_pages(pages, story_id, character_identity):
     image_paths = []
-    pages = pages[:3]
     for i, page in enumerate(pages):
         prompt = (
-            f"Children's storybook illustration in the style of warm watercolor and soft digital painting, "
-            f"featuring expressive cartoon-style characters, clear outlines, and a light yellow-orange color palette. "
-            f"Page description: {page}. No text or words on the image."
+            f"Children's storybook illustration in portrait layout (vertical format), "
+            f"with a taller height than width (e.g., 1024x1500). "
+            f"Do NOT use landscape or horizontal layout. "
+            f"Draw using consistent warm watercolor and soft digital painting style. "
+            f"Characters must be vertically centered in the scene. "
+            f"Keep consistent character design across pages: {character_identity}. "
+            f"Do not include any text or title. "
+            f"Page scene: {page}"
         )
         try:
             response = client.images.generate(
                 model="dall-e-3",
                 prompt=prompt,
                 n=1,
-                size="1024x1024"
+                size="1024x1500"
             )
             image_url = response.data[0].url
 
             img_data = requests.get(image_url).content
             filename = f"{IMAGE_DIR}/raw_story_{story_id}_page_{i+1}.png"
-            filename2 = f"{IMAGE_DIR}/story_{story_id}_page_{i + 1}.png"
             with open(filename, "wb") as f:
                 f.write(img_data)
-            generate_storybook_page_with_text(filename, page, filename2)
+
+            fix_orientation(filename)  # auto-rotate if needed
             image_paths.append("/" + filename)
         except Exception as e:
             print(f"Image error on page {i+1}: {e}")
             image_paths.append("/static/images/default.jpg")
     return image_paths
-
 @app.route("/generate", methods=["GET", "POST"])
 def generate():
     pages, images = [], []
@@ -457,7 +658,7 @@ def generate():
     topic = ""
     grade = ""
     title = ""
-    subtitle =""
+    subtitle = ""
 
     if request.method == "POST":
         field = request.form["field"]
@@ -468,67 +669,88 @@ def generate():
 
         prompt = (
             f"Write a 12 pages of creative children's storybook for a {gender} student in grade {grade} (age {age}) "
-            f"about '{topic}' in the field of {field}. Make it fun, educational, and age-appropriate."
-            f"""
-            Example: 
+            f"about '{topic}' in the field of {field}. Make it fun, educational, and age-appropriate.\n\n"
+            f"""Example: 
             Title: "The Amazing Coin Collector"
-            
             Page 1
             The Amazing Coin Collector
-                
+
             Page 2
             Max loved animals but his piggy bank was empty again. "I wish I had more money to help the animals."
-                
+
             Page 3
             Grandpa smiled, "I have something for you!" 
             It was a dusty old coin album.
             ...
-            
             """
         )
-        print("Prompt:",prompt)
 
         try:
             job_id = "ftjob-oZvoFYGdnXslXILuRtsnDXKk"
             job_info = client.fine_tuning.jobs.retrieve(job_id)
             ourmodel = job_info.fine_tuned_model
-            print("Start Generating......")
+
             response = client.chat.completions.create(
-                model= ourmodel,
+                model=ourmodel,
                 messages=[
                     {"role": "system", "content": "You are a friendly AI that tells helpful, age-appropriate stories to children."},
                     {"role": "user", "content": prompt}
                 ]
             )
-            print(response)
+
             story = response.choices[0].message.content
-            print(story)
             pages = split_story_into_pages(story)
-            print(pages)
-            # ["content for page1", "content for page2", "content for page3"]
 
-            story_id = str(uuid.uuid4())[:8]
-            images = generate_images_for_pages(pages, story_id)
+            if pages:
+                lines = pages[0].split("\n")
+                title = lines[0].strip()
+                subtitle = lines[1].strip() if len(lines) > 1 else ""
 
-            # Save for reuse
+                # Character identity extraction
+                identity_prompt = f"""
+                Extract the main character's appearance description for consistent illustrations based on this story excerpt:
+
+                \"\"\"{pages[0]}\"\"\"
+
+                Describe the main character in 1 sentence (appearance, clothes, mood). Do not include names or story details.
+                """
+
+                identity_response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": identity_prompt}],
+                    max_tokens=60
+                )
+                character_identity = identity_response.choices[0].message.content.strip()
+            else:
+                character_identity = ""
+
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT MAX(id) FROM user_stories")
+            max_id = cursor.fetchone()[0] or 0
+            story_id = max_id + 1
+
+            images = generate_images_for_pages(pages, story_id, character_identity)
+
             with open(STORY_JSON_PATH, "w") as f:
                 json.dump(pages, f)
             with open(IMAGES_JSON_PATH, "w") as f:
                 json.dump(images, f)
 
         except Exception as e:
-            print(e)
+            print("Story generation error:", e)
             pages = [f"Error generating story: {e}"]
-            # images = ["/static/images/default.jpg"]
+
         if "user_id" in session:
             with sqlite3.connect(DB_PATH) as conn:
                 cursor = conn.cursor()
                 created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 cursor.execute(
-                    "INSERT INTO user_stories (user_id, title, field, topic, grade, story_json, image_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO user_stories (user_id, title, field, topic, grade, story_json, image_json, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         session["user_id"],
-                        pages[0].split("\n")[0],
+                        title,
                         field,
                         topic,
                         grade,
@@ -539,7 +761,9 @@ def generate():
                 )
                 conn.commit()
 
-    return render_template("generate.html", pages=pages, images=images, field=field, topic=topic, grade=grade, title=title, subtitle=subtitle)
+    return render_template("generate.html", pages=pages, images=images, field=field, topic=topic, grade=grade, title=title, subtitle=subtitle, story_id=story_id if pages else None)
+
+
 
 @app.route("/profile")
 def profile():
