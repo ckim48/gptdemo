@@ -22,7 +22,7 @@
 
     #storybook {
       width: 1000px;
-      height: 720px;
+      height: 620px;
       perspective: 2000px;
       position: relative;
       border-radius: 12px;
@@ -260,13 +260,52 @@
       <div class="hover-arrow hover-right d-none d-md-block" id="hover-next"><i class="bi bi-chevron-right"></i></div>
 
       <div id="storybook">
-        {% for i in range(pages|length) %}
-          <div class="page-container border-end">
-            <div class="page">
-              <img src="{{ images[i] }}" alt="Page Image">
-            </div>
-          </div>
-        {% endfor %}
+
+<div class="page-container border-end">
+  <div class="page"></div>
+</div>
+<!-- Left Cover Page: Title and Description -->
+<!-- Page 1: Left - Title -->
+<div class="page-container border-end" style="background: linear-gradient(135deg, #ffffff, #f0f4f8);">
+  <div class="page d-flex flex-column align-items-center justify-content-center text-center">
+    <h3 class="fw-bold display-5 mb-4">{{ title }}</h3>
+    <p class="text-muted mt-2">Powered by ProjectGPT</p>
+  </div>
+</div>
+
+<!-- Page 2: Right - Cover Image -->
+<div class="page-container border-end" style="background: linear-gradient(135deg, #ffffff, #f0f4f8);">
+  <div class="page d-flex align-items-center justify-content-center">
+    {% if images|length > 0 %}
+      <img src="{{ images[0] }}" alt="Cover Image" style="max-width: 85%; height: auto; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
+    {% endif %}
+  </div>
+</div>
+
+
+<!-- Main Story Pages -->
+{% for i in range(1, pages|length) %}
+  <!-- Left: Text -->
+  <div class="page-container border-end">
+    <div class="page d-flex align-items-center justify-content-center">
+      <div class="story-text w-100 px-3">
+        <p>{{ pages[i] }}</p>
+      </div>
+    </div>
+  </div>
+  <!-- Right: Image -->
+  <div class="page-container border-end">
+    <div class="page d-flex align-items-center justify-content-center">
+      <div class="story-image w-100 px-3">
+        <img src="{{ images[i] }}" alt="Page Image">
+      </div>
+    </div>
+  </div>
+{% endfor %}
+
+
+
+
       </div>
     </div>
 
@@ -324,10 +363,12 @@
     if ($book.find('.page-container').length > 1) {
       $book.turn({
         width: 1000,
-        height: 720,
+        height: 620,
         autoCenter: true,
         elevation: 50,
-        gradients: true
+        gradients: true,
+        display: 'double',
+        page: 2
       });
 
       $('#prev-page, #hover-prev').click(() => $book.turn('previous'));

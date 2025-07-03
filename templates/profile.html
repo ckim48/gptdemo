@@ -11,8 +11,28 @@
 
   <!-- Google Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Playfair+Display:wght@500;700&display=swap" rel="stylesheet">
-  <style>
 
+  <style>
+    .btn-quiz {
+      background: linear-gradient(to right, #7048e8, #9775fa);
+      color: white;
+      font-weight: 600;
+      border: none;
+      padding: 0.45rem 1rem;
+      border-radius: 0.5rem;
+      font-size: 0.85rem;
+      transition: all 0.2s ease-in-out;
+    }
+
+    .btn-quiz:hover {
+      background: linear-gradient(to right, #6741d9, #845ef7);
+      color: white;
+      transform: translateY(-2px);
+    }
+
+    .btn-quiz:active {
+      transform: translateY(0);
+    }
   </style>
 </head>
 <body>
@@ -28,32 +48,37 @@
   {% if stories %}
     <div class="row g-4">
       {% for story in stories %}
-<div class="col-md-6 col-lg-3">
-  <a href="{{ url_for('view_story', story_id=story[0]) }}" class="text-decoration-none text-dark">
-    <div class="card h-100 shadow-sm border-0 rounded-4 overflow-hidden">
-      {% if story[6] %}
-<img src="{{ story[6] }}" alt="Storybook Cover" class="card-img-top" style="height: 380px; object-fit: cover; object-position: top;">
-      {% else %}
-        <div class="bg-light d-flex align-items-center justify-content-center" style="height: 240px;">
-          <i class="bi bi-image fs-1 text-muted"></i>
-        </div>
-      {% endif %}
-      <div class="card-body">
-        <h5 class="card-title fw-semibold mb-2" style="font-family: 'Playfair Display', serif; color: #8224c7; font-weight:700;">
-          {{ story[1] }}
-        </h5>
-        <p class="card-text mb-1"><i class="bi bi-journal-text me-2"></i>{{ story[2] }} / {{ story[3] }}</p>
-        <p class="card-text"><i class="bi bi-award me-2"></i>Grade {{ story[4] }}</p>
-        <div class="text-end mt-3">
-          <small class="text-muted">
-            <i class="bi bi-clock me-1"></i>{{ story[5] | datetimeformat }}
-          </small>
+      <div class="col-md-6 col-lg-3">
+        <div class="card h-100 shadow-sm border-0 rounded-4 overflow-hidden">
+          <a href="{{ url_for('view_story', story_id=story[0]) }}" class="text-decoration-none text-dark">
+            {% if story[6] %}
+              <img src="{{ story[6] }}" alt="Storybook Cover" class="card-img-top" style="height: 380px; object-fit: cover; object-position: top;">
+            {% else %}
+              <div class="bg-light d-flex align-items-center justify-content-center" style="height: 240px;">
+                <i class="bi bi-image fs-1 text-muted"></i>
+              </div>
+            {% endif %}
+          </a>
+          <div class="card-body d-flex flex-column justify-content-between">
+            <div>
+              <h5 class="card-title fw-semibold mb-2" style="font-family: 'Playfair Display', serif; color: #8224c7;">
+                {{ story[1] }}
+              </h5>
+              <p class="card-text mb-1"><i class="bi bi-journal-text me-2"></i>{{ story[2] }} / {{ story[3] }}</p>
+              <p class="card-text"><i class="bi bi-award me-2"></i>Grade {{ story[4] }}</p>
+            </div>
+            <div class="d-flex justify-content-between align-items-end mt-3">
+              <small class="text-muted">
+                <i class="bi bi-clock me-1"></i>{{ story[5] | datetimeformat }}
+              </small>
+              <form method="post" action="{{ url_for('generate_quiz', story_id=story[0]) }}">
+                <input type="hidden" name="story_id" value="{{ story[0] }}">
+                <button type="submit" class="btn btn-quiz">Quiz Time</button>
+              </form>
+            </div>
+          </div>
         </div>
       </div>
-    </div>
-  </a>
-</div>
-
       {% endfor %}
     </div>
   {% else %}
@@ -63,36 +88,35 @@
       <a href="{{ url_for('generate') }}" class="btn btn-primary rounded-pill px-4">Generate One Now</a>
     </div>
   {% endif %}
+
   {% if recommended %}
   <div class="mt-5">
     <h4 class="fw-bold" style="font-family: 'Playfair Display', serif;">Recommended Topics for You</h4>
     <div class="row row-cols-1 row-cols-md-2 g-4 mt-3">
       {% for item in recommended %}
-        <div class="col">
-          <div class="card shadow-sm rounded-4 border-0 h-100">
-            <div class="card-body">
-              <h5 class="card-title text-primary-emphasis mb-1">{{ item.topic }}</h5>
-              <p class="mb-1"><strong>Field:</strong> {{ item.field }}</p>
-              <p class="text-muted"><strong>Why:</strong> {{ item.reason }}</p>
-              <form method="post" action="{{ url_for('generate') }}">
-                <input type="hidden" name="field" value="{{ item.field }}">
-                <input type="hidden" name="topic" value="{{ item.topic }}">
-                <input type="hidden" name="grade" value="3"> <!-- optionally auto-fill -->
-                <input type="hidden" name="age" value="9">
-                <input type="hidden" name="gender" value="any">
-<!--                <button class="btn btn-outline-primary btn-sm mt-2" type="submit">Generate Story</button>-->
-              </form>
-            </div>
+      <div class="col">
+        <div class="card shadow-sm rounded-4 border-0 h-100">
+          <div class="card-body">
+            <h5 class="card-title text-primary-emphasis mb-1">{{ item.topic }}</h5>
+            <p class="mb-1"><strong>Field:</strong> {{ item.field }}</p>
+            <p class="text-muted"><strong>Why:</strong> {{ item.reason }}</p>
+            <form method="post" action="{{ url_for('generate') }}">
+              <input type="hidden" name="field" value="{{ item.field }}">
+              <input type="hidden" name="topic" value="{{ item.topic }}">
+              <input type="hidden" name="grade" value="3">
+              <input type="hidden" name="age" value="9">
+              <input type="hidden" name="gender" value="any">
+              <!-- Optional generate button can be added here -->
+            </form>
           </div>
         </div>
+      </div>
       {% endfor %}
     </div>
   </div>
-{% endif %}
-
+  {% endif %}
 </div>
 {% endblock %}
-
 
 <!-- Bootstrap Bundle JS -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
