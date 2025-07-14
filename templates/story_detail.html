@@ -278,9 +278,15 @@
 <!-- Page 2: Right - Cover Image -->
 <div class="page-container border-end" style="background: linear-gradient(135deg, #ffffff, #f0f4f8);">
   <div class="page d-flex align-items-center justify-content-center">
-    {% if images|length > 0 %}
-      <img src="{{ images[0] }}" alt="Cover Image" style="max-width: 85%; height: auto; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
-    {% endif %}
+{% if images|length > 0 and images[0] %}
+  <img src="{{ images[0] }}" alt="Cover Image" style="max-width: 85%; height: auto; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
+{% else %}
+  <div class="text-muted text-center small">
+    <i class="bi bi-image fs-1 mb-2 d-block"></i>
+    As this is a demo, we only provide the first 2 pages.
+  </div>
+{% endif %}
+
   </div>
 </div>
 
